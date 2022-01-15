@@ -13,7 +13,7 @@ HEADER, all numbers are unsigned, little endian:
 00000010:                         00 00 00 00 : BUILD - SEMVER                                      ................
 00000010:                                     00 00 00 00 : PADDING (0)                             ................
 
-TRAILER, all numbers are unsigned, little endian, no preceding padding (may not be aligned)
+TRAILER, all numbers are unsigned, little endian, there is no preceding padding (may not be aligned)
 000008e0: 07 69 : TLV MAGIC                                                                         .i(......Y.7zn..
 000008e0:       28 00 : TOTAL TLV (TRAILER) LENGTH                                                  .i(......Y.7zn..
 000008e0:             10 : TlV VALUE KIND (SHA256)                                                  .i(......Y.7zn..
