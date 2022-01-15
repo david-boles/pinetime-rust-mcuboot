@@ -1,3 +1,5 @@
 - Update dependencies
 - change memory layout, try building OTA package
 - update README(s)
+- Simplify and automate building/flashing process?
+- Include Infinitime as submodule? External dependency? Just include imgtool.py and/or bootloader.bin?
