@@ -1,7 +1,8 @@
-- Update dependencies
+- Update dependencies, rust version?
 - update README(s)
 - Simplify and automate building/flashing process
     - Should be possible to do manually with relatively little code
     - Create an xtask for building and then modifying the ELF
     - Set up probe-rs/vscode to use this with a prelaunch task and the programBinary and restore_unwritten_bytes options
     - Modify cargo-embed to support specifying an artifact/program binary
+- improve other documentation including infinitime, https://wiki.pine64.org/wiki/PineTime_bootloader_improvements, and other pine64 pages

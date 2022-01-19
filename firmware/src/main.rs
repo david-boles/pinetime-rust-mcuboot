@@ -1,11 +1,17 @@
 #![no_main]
 #![no_std]
 
+// #[no_mangle]
+// #[link_section = ".ccmram"]
+// pub static VAR1: u32 = 1;
+
 use embedded_hal::digital::v2::InputPin;
 use embedded_hal::digital::v2::OutputPin;
 use nrf52832_hal as hal;
 use nrf52832_hal::gpio::Level;
 use rtt_target::{rprintln, rtt_init_print};
+
+static FOO: core::sync::atomic::AtomicI32 = core::sync::atomic::AtomicI32::new(0);
 
 #[panic_handler] // panicking behavior
 fn panic(_: &core::panic::PanicInfo) -> ! {
@@ -30,6 +36,7 @@ fn main() -> ! {
             rprintln!("High!");
             led_mid.set_high().unwrap();
             led_high.set_high().unwrap();
+            FOO.store(7, core::sync::atomic::Ordering::Relaxed);
         } else {
             rprintln!("Low!");
             led_mid.set_low().unwrap();
