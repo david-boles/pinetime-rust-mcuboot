@@ -1,18 +1,16 @@
-use anyhow::{anyhow, bail, Context, Error, Result as AResult};
+use anyhow::{anyhow, bail, Result as AResult};
 use cargo_metadata::camino::Utf8PathBuf;
 use cargo_metadata::Message;
-use clap::{ArgEnum, Args, Parser, Subcommand};
-use object::{Object, ObjectSection, ObjectSegment, SegmentFlags};
+use json::{self, object as json_object};
+use object::{Object, ObjectSection, ObjectSegment};
 use sha2::{Digest, Sha256};
-use std::fs::{File, OpenOptions};
+use std::cmp::{max, min};
+use std::fs::OpenOptions;
 use std::io::{Read, Write};
-use std::ops::{Add, Range};
+use std::ops::Range;
 use std::os::unix::prelude::FileExt;
 use std::process::{Command, Stdio};
-use std::{
-    cmp::{max, min},
-    fs, io,
-};
+use zip::write::FileOptions;
 
 /// Build the project and then augment the mcuboot sections with their data.
 pub fn build(build_opts: Vec<String>) -> AResult<Utf8PathBuf> {
@@ -126,10 +124,10 @@ pub fn build(build_opts: Vec<String>) -> AResult<Utf8PathBuf> {
     header.extend((bin.len() as u32).to_le_bytes());
     header.extend([0, 0, 0, 0]);
     // TODO make these configurable
-    header.push(0); // Major version number
-    header.push(0); // Minor version number
-    header.extend((0 as u16).to_le_bytes()); // Patch version number
-    header.extend((0 as u32).to_le_bytes()); // Build version number
+    header.push(0_u8); // Major version number
+    header.push(0_u8); // Minor version number
+    header.extend(0_u16.to_le_bytes()); // Patch version number
+    header.extend(0_u32.to_le_bytes()); // Build version number
     header.extend([0, 0, 0, 0]);
     assert_eq!(header_range.1, header.len() as u64);
     file.write_all_at(&header, header_range.0)?;
@@ -147,15 +145,79 @@ pub fn build(build_opts: Vec<String>) -> AResult<Utf8PathBuf> {
     // Finish writing the binary to disk and return with its path.
     file.sync_all()?;
 
-    // // TODO temp
-    // let mut file = OpenOptions::new().write(true).open("./temp")?;
-    // file.write_all(&header)?;
-    // file.write_all(&bin)?;
-    // file.write_all(&trailer)?;
+    // Prepare DFU (OTA update) data
+    // See adafruit-nrfutil_notes.md for more details
+    let mut image: Vec<u8> = vec![];
+    image.extend(&header);
+    image.extend(&bin);
+    image.extend(&trailer);
+
+    let crc16 = compute_dfu_crc(&image);
+
+    let mut dat_contents: Vec<u8> = vec![];
+    // TODO make configurable, tied to manifest below
+    dat_contents.extend(0xffff_u16.to_le_bytes()); // Device type
+    dat_contents.extend(0xffff_u16.to_le_bytes()); // Device revision
+    dat_contents.extend(0xffffffff_u32.to_le_bytes()); // App version
+    dat_contents.extend(0_u16.to_le_bytes());
+    dat_contents.extend(crc16.to_le_bytes());
+
+    let manifest = json_object! {
+        "manifest": {
+            "application": {
+                "bin_file": "image.bin",
+                "dat_file": "image.dat",
+                "init_packet_data": {
+                    "application_version": 0xffffffff_u32,
+                    "device_revision": 0xffff_u16,
+                    "device_type": 0xffff_u16,
+                    "firmware_crc16": crc16,
+                    "softdevice_req": []
+                }
+            },
+            "dfu_version": 0.5
+        }
+    };
+
+    // Create DFU (OTA update) .zip
+    let dfu_path = path
+        .with_file_name(
+            path.file_stem()
+                .ok_or(anyhow!("empty artifact file name"))?
+                .to_string()
+                + "-dfu",
+        )
+        .with_extension("zip");
+    let dfu_file = std::fs::File::create(&dfu_path).unwrap();
+    let mut dfu_zip = zip::ZipWriter::new(dfu_file);
+    let zip_options = FileOptions::default();
+
+    dfu_zip.start_file("image.bin", zip_options)?;
+    dfu_zip.write_all(&image)?;
+
+    dfu_zip.start_file("image.dat", zip_options)?;
+    dfu_zip.write_all(&dat_contents)?;
+
+    dfu_zip.start_file("manifest.json", zip_options)?;
+    manifest.write(&mut dfu_zip)?;
+
+    dfu_zip.finish()?.sync_all()?;
 
     Ok(path)
 }
 
 fn offset_range(offset: u64, address: u64, limit: u64) -> Range<usize> {
     (address - offset) as usize..(limit - offset) as usize
+}
+
+fn compute_dfu_crc(data: &[u8]) -> u16 {
+    let mut crc: u16 = 0xffff;
+    for byte in data {
+        crc = (crc >> 8 & 0x00FF) | (crc << 8 & 0xFF00);
+        crc ^= *byte as u16;
+        crc ^= (crc & 0x00FF) >> 4;
+        crc ^= (crc << 8) << 4;
+        crc ^= ((crc & 0x00FF) << 4) << 1;
+    }
+    crc
 }
