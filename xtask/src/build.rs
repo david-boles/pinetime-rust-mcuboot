@@ -2,14 +2,17 @@ use anyhow::{anyhow, bail, Context, Error, Result as AResult};
 use cargo_metadata::camino::Utf8PathBuf;
 use cargo_metadata::Message;
 use clap::{ArgEnum, Args, Parser, Subcommand};
-use object::{Object, ObjectSection};
+use object::{Object, ObjectSection, ObjectSegment, SegmentFlags};
 use sha2::{Digest, Sha256};
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
-use std::ops::Add;
+use std::ops::{Add, Range};
 use std::os::unix::prelude::FileExt;
 use std::process::{Command, Stdio};
-use std::{fs, io};
+use std::{
+    cmp::{max, min},
+    fs, io,
+};
 
 /// Build the project and then augment the mcuboot sections with their data.
 pub fn build(build_opts: Vec<String>) -> AResult<Utf8PathBuf> {
@@ -83,25 +86,29 @@ pub fn build(build_opts: Vec<String>) -> AResult<Utf8PathBuf> {
         .section_by_name(".mcuboot_trailer")
         .ok_or(anyhow!("missing section .mcuboot_trailer"))?;
 
-    // Construct the program bin for hashing
-    // TODO improve this logic
-    let bin_start_inc = header.address() + header.size();
-    let bin_end_exc = trailer.address();
-    let mut bin = vec![0; (bin_end_exc - bin_start_inc) as usize];
-    let mut add_section_to_bin = |name: &str| -> AResult<()> {
-        let section = obj
-            .section_by_name(name)
-            .ok_or(anyhow!(format!("missing section {}", name)))?;
-        let bin_region_start_inc = (section.address() - bin_start_inc) as usize;
-        let bin_region =
-            &mut bin[bin_region_start_inc..bin_region_start_inc + section.size() as usize];
-        bin_region.copy_from_slice(section.data()?);
-        Ok(())
-    };
-    add_section_to_bin(".vector_table")?;
-    add_section_to_bin(".text")?;
-    add_section_to_bin(".rodata")?;
-    // May need to include .gnu.sgstubs if linking with GNU tooling?
+    // Construct the raw program bin
+    let bin_addr = header.address() + header.size();
+    let bin_limit = trailer.address();
+    let mut bin = vec![0; (bin_limit - bin_addr) as usize];
+    for segment in obj.segments() {
+        // All of these segments will be PT_LOAD
+        let seg_addr = segment.address();
+        let seg_size = segment.size();
+        let seg_limit = seg_addr + seg_size;
+
+        // Only copy over the parts of segments that lie in the bin region.
+        if seg_addr >= bin_limit || seg_limit <= bin_addr {
+            continue;
+        }
+        let included_addr = max(seg_addr, bin_addr);
+        let included_limit = min(seg_addr + seg_size, bin_limit);
+
+        let bin_slice = &mut bin[offset_range(bin_addr, included_addr, included_limit)];
+        let included_slice =
+            &segment.data()?[offset_range(seg_addr, included_addr, included_limit)];
+
+        bin_slice.copy_from_slice(included_slice);
+    }
 
     // Note the header and trailer data locations in the file
     let header_range = header
@@ -139,5 +146,16 @@ pub fn build(build_opts: Vec<String>) -> AResult<Utf8PathBuf> {
 
     // Finish writing the binary to disk and return with its path.
     file.sync_all()?;
+
+    // // TODO temp
+    // let mut file = OpenOptions::new().write(true).open("./temp")?;
+    // file.write_all(&header)?;
+    // file.write_all(&bin)?;
+    // file.write_all(&trailer)?;
+
     Ok(path)
+}
+
+fn offset_range(offset: u64, address: u64, limit: u64) -> Range<usize> {
+    (address - offset) as usize..(limit - offset) as usize
 }
