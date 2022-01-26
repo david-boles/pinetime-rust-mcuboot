@@ -20,3 +20,8 @@ The DFU update zip can be found next to the firmware binary after building. It c
 - Release button.
 - Wait for another boot cycle and for the Infinitime logo to appear.
 - Connect and flash as normal.
+
+# Not working
+- Additionally configurability for the xtask scripts (they also need some cleaning up).
+- cargo-embed - it does not yet appear to support pre-generated artifacts, I'm planning to submit a PR
+- probe-rs' vscode plugin - nondescriptive error occurs, I haven't yet dug into that.
